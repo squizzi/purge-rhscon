@@ -65,12 +65,13 @@ def print_message(message, state=None, color=None):
             raise
     # if no state is supplied just build message with provided color
     if state == None:
-        state = ''
+        constructed_state = color + ''
     else:
         # else uppercase it
         state = state.upper()
-    constructed_state = color + ('[{0}] '.format(state))
-    constructed_message = constructed_state + colors.ENDC + str(message)
+        constructed_state = color + ('[{0}]'.format(state))
+    # construct message from constructed_state
+    constructed_message = str(constructed_state).ljust(20) + colors.ENDC + message
     return constructed_message
 
 pm = print_message
@@ -160,8 +161,19 @@ def generate_hosts():
     # the names of the key files represent the FQDNs of each of the associated
     # nodes, so we'll use those to construct a host_list
     host_list = []
-    for fl in os.listdir("/etc/salt/pki/master/minions"):
-        host_list.append(fl)
+    try:
+        for fl in os.listdir("/etc/salt/pki/master/minions"):
+            host_list.append(fl)
+    except OSError:
+        print pm('Unable to automatically generate node list, no \
+/etc/salt/pki/master/minions directory found, is RHSC installed here? \
+Exiting now',
+        'error',
+        colors.ERROR)
+        print pm ('Use the -n, --nodes flag with FQDNs to circumvent automated node list generation',
+        'info',
+        colors.INFO)
+        sys.exit(1)
     return host_list
 
 """
@@ -220,7 +232,7 @@ Clean the mongodb
 Uses a mongo shell script which drops storage, storage_nodes, storage_clusters,
 skyring_utilization, cluster_summary, storage_logical_units, tasks,
 block_devices
-See cleaner.js for more info
+See dbcleaner.js for more info
 """
 def clean_db(scriptfile):
     # Get db password from skyring.conf, skyring.conf is json
@@ -231,7 +243,8 @@ def clean_db(scriptfile):
     print pm('Cleaning RHSC database', 'info', colors.INFO)
     mongo_args = ["/usr/bin/mongo",
                   "-u", "admin",
-                  "-p", "{0}".format(password)]
+                  "-p", "{0}".format(password),
+                  "<", "{1}".format(scriptfile)]
     # Clean salt-keys
     print pm('Removing salt-keys', 'info', colors.INFO)
     salt_args = ["/usr/bin/salt",
@@ -329,7 +342,7 @@ def main():
         pass
 
     # Clean the mongodb on the RHSC node
-    clean_db('cleaner.js')
+    clean_db('dbcleaner.js')
 
     # Remove minions directories
     remove_dir('/etc/salt/pki/master/minions')
@@ -349,7 +362,7 @@ def main():
         pass
 
     # Print a completion message and exit
-    print pm('Purge complete', 'complete', colors.OKBLUE)
+    print pm('Purge successfully complete', 'done', colors.OKBLUE)
     sys.exit(0)
 
 """
