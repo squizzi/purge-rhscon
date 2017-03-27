@@ -37,6 +37,7 @@ from subprocess import Popen, PIPE
 Terminal colors
 """
 class colors:
+    HEADER = '\033[96m'     # cyan
     INFO = '\033[95m'       # purple
     OKBLUE = '\033[94m'     # blue
     OKGREEN = '\033[92m'    # green
@@ -61,16 +62,11 @@ def print_message(message, state=None, color=None):
         # above only
         try:
             color = color
-        except AttributeError as e:
+        except AttributeError:
             raise
-    # if no state is supplied just build message with provided color
-    if state == None:
-        constructed_state = color + ''
-    else:
-        # else uppercase it
-        state = state.upper()
-        constructed_state = color + ('[{0}]'.format(state))
-    # construct message from constructed_state
+    #uppercase it and left justify it so the state labels match up
+    state = state.upper()
+    constructed_state = color + ('[{0}]'.format(state))
     constructed_message = str(constructed_state).ljust(20) + colors.ENDC + message
     return constructed_message
 
@@ -106,6 +102,7 @@ def manage_service(command, service):
             print pm('An invalid command was passed to manage_service()',
                  'error',
                  colors.ERROR)
+            sys.exit(1)
     except dbus.exceptions.DBusException:
         print pm('Access denied while attempting to restart {0}'.format(service),
                  'error',
@@ -154,10 +151,30 @@ def is_valid_hostname(hostname):
     allowed = re.compile("(?!-)[A-Z\d-]{1,63}(?<!-)$", re.IGNORECASE)
     return all(allowed.match(x) for x in hostname.split("."))
 
+""" Yes or no prompting """
+def yes_no(question):
+    yes = 'yes-i-really-really-mean-it'
+    no = set(['no','n'])
+    prompt = " [yes-i-really-really-mean-it / No] "
+    while True:
+        print question + '?' + prompt
+        choice = raw_input().lower()
+        if choice == '':
+            # If no choice is given, return no
+            return False
+        if choice in no:
+            return False
+        if choice == yes:
+            return True
+        else:
+           print "\nPlease respond with 'yes-i-really-really-mean-it' or 'no'"
+
 """
 Attempt to automatically generate a host list from /etc/salt/pki/master/minions
 """
 def generate_hosts():
+    print pm('Attempting to generate a list of hosts associated with this RHSC',
+             'info', colors.INFO)
     # the names of the key files represent the FQDNs of each of the associated
     # nodes, so we'll use those to construct a host_list
     host_list = []
@@ -181,6 +198,8 @@ Build a list of hosts from given comma-delimited hosts and run validation
 on each of them
 """
 def build_host_list(hosts):
+    print pm('Building a list of hosts from --nodes flag input', 'info',
+             colors.INFO)
     try:
         host_list = set(hosts.split(","))
         for each in host_list:
@@ -282,7 +301,7 @@ exit handler
 """
 def exit_handler():
     pass
-    #print pm('rhscon-purge has exited', 'info', colors.INFO)
+    #print pm('rhscon-purge has exited', 'exit', colors.OKBLUE)
 
 """
 Super simple signal handler
@@ -292,7 +311,7 @@ SIGNALS_TO_NAMES_DICT = dict((getattr(signal, n), n) \
 
 def signal_handler(signum, frame, retries=0):
     print pm("Received signal: {0}({1})".format(SIGNALS_TO_NAMES_DICT[signum], signum),
-             'info', colors.INFO)
+             'warning', colors.WARNING)
     raise RuntimeError('Received signal: {0}({1})'.format(SIGNALS_TO_NAMES_DICT[signum], signum))
     sys.exit(signum)
 
@@ -321,49 +340,62 @@ def main():
 
     args = parser.parse_args()
 
-    # Check to see how we need to generate a host_list
-    if args.nodes != None:
-        host_list = build_host_list(args.nodes)
+    print(colors.HEADER + 'Starting Red Hat Storage Console purge...' + colors.ENDC)
+    print pm('**ALL** existing data on this RHSC will be removed once the purge is complete.',
+       'warning', colors.WARNING)
+    choice = yes_no('Are you sure you wish to proceed')
+
+    if choice == True:
+        # proceed
+        # Check to see how we need to generate a host_list
+        if args.nodes != None:
+            host_list = build_host_list(args.nodes)
+        else:
+            host_list = generate_hosts()
+
+        # Steps based on guide from https://access.redhat.com/solutions/2944461
+        # Stop skyring and salt-master on RHSC node (where script runs)
+        manage_service('stop', 'skyring')
+        manage_service('stop', 'salt-master')
+
+        # On all given storage nodes, stop salt-minion services and remove salt-keys
+        if args.nonode_clean != True:
+            clean_nodes(host_list)
+        else:
+            # Don't clean if nonode_clean is set
+            print pm('--no-node-clean is set, skipping storage node cleaning',
+                     'skip', colors.WARNING)
+            pass
+
+        # Clean the mongodb on the RHSC node
+        clean_db('dbcleaner.js')
+
+        # Remove minions directories
+        remove_dir('/etc/salt/pki/master/minions')
+
+        # Start skyring and salt-master
+        manage_service('start', 'skyring')
+        manage_service('start', 'salt-master')
+
+        # Bootstrap client agents
+        if args.nonode_clean != True:
+            # get hostname of RHSC server for setup-agent
+            server = socket.gethostname()
+            # bootstrap the nodes
+            bootstrap_nodes(host_list, server)
+        else:
+            # Don't bootstrap if nonode_clean is set
+            print pm('--no-node-clean is set, skipping storage node bootstrap',
+                     'skip', colors.WARNING)
+            pass
+
+        # Print a completion message and exit
+        print pm('Purge successfully complete', 'done', colors.OKBLUE)
+        sys.exit(0)
     else:
-        host_list = generate_hosts()
-
-    # Steps based on guide from https://access.redhat.com/solutions/2944461
-    # Stop skyring and salt-master on RHSC node (where script runs)
-    manage_service('stop', 'skyring')
-    manage_service('stop', 'salt-master')
-
-    # On all given storage nodes, stop salt-minion services and remove salt-keys
-    if args.nonode_clean != True:
-        clean_nodes(host_list)
-    else:
-        # Don't clean if nonode_clean is set
-        print pm('--no-node-clean is set, skipping storage node cleaning',
-                 'info', colors.INFO)
-        pass
-
-    # Clean the mongodb on the RHSC node
-    clean_db('dbcleaner.js')
-
-    # Remove minions directories
-    remove_dir('/etc/salt/pki/master/minions')
-
-    # Start skyring and salt-master
-    manage_service('start', 'skyring')
-    manage_service('start', 'salt-master')
-
-    # Bootstrap client agents
-    if args.nonode_clean != True:
-        server = socket.gethostname()
-        bootstrap_nodes(host_list, server)
-    else:
-        # Don't bootstrap if nonode_clean is set
-        print pm('--no-node-clean is set, skipping storage node bootstrap',
-                 'info', colors.INFO)
-        pass
-
-    # Print a completion message and exit
-    print pm('Purge successfully complete', 'done', colors.OKBLUE)
-    sys.exit(0)
+        # do not proceed and exit out
+        print pm('Cancelling purge due to user input', 'exit', colors.OKBLUE)
+        sys.exit(0)
 
 """
 Main
