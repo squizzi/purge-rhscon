@@ -11,7 +11,7 @@ requires no arguments, but accepts some optional ones.  Root is required.
 ~~~ 
 
 * `-h`, `--help`: Print the help page and exit
-* `-n` NODE[,NODE2], `--nodes` NODE[,NODE2]: Define a FQDN or list of 
+* `-n NODE[,NODE2]`, `--nodes NODE[,NODE2]`: Define a FQDN or list of 
 comma-delimited FQDNs which currently serve as nodes in a cluster. rhscon-purge
 will attempt to determine nodes associated with an RHSC automatically. This 
 option should only be used to specify additional nodes that need to be cleaned, 
