@@ -30,6 +30,8 @@ import socket
 import signal
 import atexit
 import argparse
+import json
+import paramiko
 from shutil import rmtree
 from subprocess import Popen, PIPE
 
@@ -81,8 +83,10 @@ def manage_service(command, service):
     # append grammar to commands for a messagestr
     if command == 'stop':
         command_name = command + 'ping'
+        command_name2 = command + 'ped'
     else:
         command_name = command + 'ing'
+        command_name2 = command + 'ed'
     # build a messagestr, for example: Stopping salt-minion service
     messagestr = command_name + ' ' + service + ' service'
     print pm(messagestr, 'info', colors.INFO)
@@ -91,22 +95,27 @@ def manage_service(command, service):
         systemd = sysbus.get_object('org.freedesktop.systemd1',
                                     '/org/freedesktop/systemd1')
         manager = dbus.Interface(systemd,
-                                 'org.freedesktop.systemd.Manager')
+                                 'org.freedesktop.systemd1.Manager')
+        valid = {'stop', 'start', 'restart'}
         if command == 'stop':
             job = manager.StopUnit('{0}.service'.format(service), 'fail')
         if command == 'start':
-            job = manager.StartUnit('{0}.service'.format(service), 'fail')
+            job = manager.StartUnit('{0}.service'.format(service), 'replace')
         if command == 'restart':
             job = manager.RestartUnit('{0}.service'.format(service), 'fail')
-        if not command == 'stop' or 'start' or 'restart':
+        if not any(v in command for v in valid):
             print pm('An invalid command was passed to manage_service()',
                  'error',
                  colors.ERROR)
             sys.exit(1)
+        print pm('{0} {1} service'.format(command_name2, service),
+                 'done', colors.OKBLUE)
     except dbus.exceptions.DBusException:
-        print pm('Access denied while attempting to restart {0}'.format(service),
+        print pm('An issue occurred while attempting to {0} {1}'.format(command, service),
                  'error',
                  colors.ERROR)
+        raise
+        sys.exit(1)
 
 """
 rm -rf a tree
@@ -118,6 +127,7 @@ def remove_dir(directory):
         rmtree(directory)
     except IOError as e:
         print pm(e, 'error', colors.ERROR)
+    print pm('{0} removed'.format(directory), 'done', colors.OKBLUE)
 
 """
 Remove files
@@ -221,7 +231,7 @@ def build_host_list(hosts):
 Given a host_list, clean each storage node
 """
 def clean_nodes(host_list):
-    storage_clean_command = 'systemctl stop salt-minion ; rm -f /etc/salt/pki/minion'
+    storage_clean_command = 'systemctl stop salt-minion ; rm -rf /etc/salt/pki/minion'
     for each in host_list:
         # We shouldn't need keyless ssh as it should already be configured if
         # RHSC had already been running/deployed
@@ -232,19 +242,42 @@ def clean_nodes(host_list):
         ssh.load_system_host_keys()
         print pm('Connecting to host: {0} to clean storage node configuration'.format(each),
                  'info', colors.INFO)
-        ssh.connect(each,
+        try:
+            ssh.connect(each,
                     username="root",
-                    look_for_keys=False
+                    look_for_keys=True
                     )
-        stdin, stdout, stderr = ssh.exec_command(storage_clean_command)
-        exit_status = stdout.channel.recv_exit_status()
-        if exit_status == 0:
-            print pm('Successfully cleaned node: {0}'.format(each), 'info',
-                     colors.INFO)
-        else:
-            print pm('Error cleaning node: {0}'.format(each), 'error',
+            stdin, stdout, stderr = ssh.exec_command(storage_clean_command)
+            exit_status = stdout.channel.recv_exit_status()
+            if exit_status == 0:
+                print pm('Successfully cleaned host: {0}'.format(each), 'done',
+                     colors.OKBLUE)
+            else:
+                print pm('Error cleaning host: {0}: \
+systemctl stop salt-minion; rm -rf /etc/salt/pki/minion exited with: \
+{1}'.format(each, exit_status),
+                     'error',
                      colors.ERROR)
+                ssh.close()
+                sys.exit(1)
             ssh.close()
+            print pm('Cleaned host: {0}'.format(each), 'done',
+                     colors.OKBLUE)
+        except paramiko.ssh_exception.SSHException as e:
+            if str(e) == 'No authentication methods available':
+                print pm('Error establishing ssh connection to host: {0}!'.format(each),
+                         'error', colors.ERROR)
+                print pm('Passwordless ssh is *not* configured for this host, \
+please configure passwordless ssh for root for each storage node then re-run \
+rhscon-purge\nSee: https://access.redhat.com/node/705363/',
+                         'error', colors.ERROR)
+                client.close()
+                sys.exit(1)
+            else:
+                print pm('Error establishing ssh connection to host: {0}'.format(each),
+                     'error', colors.ERROR)
+                raise
+                sys.exit(1)
 
 """
 Clean the mongodb
@@ -255,53 +288,59 @@ See dbcleaner.js for more info
 """
 def clean_db(scriptfile):
     # Get db password from skyring.conf, skyring.conf is json
-    with open('file') as skyringconf:
-        skyringconf = json.load(skyringconf)
-        password = str(skyringconf["dbconfig"]["password"])
+    try:
+        with open('/etc/skyring/skyring.conf') as skyringconf:
+            skyringconf = json.load(skyringconf)
+            password = str(skyringconf["dbconfig"]["password"])
+    except IOError:
+        print pm('Unable to find /etc/skyring/skyring.conf, is skyring installed here? Exiting',
+                 'error', colors.ERROR)
+        sys.exit(1)
     # Run the mongo clean
     print pm('Cleaning RHSC database', 'info', colors.INFO)
-    mongo_args = ["/usr/bin/mongo",
+    mongo_args = ["/usr/bin/mongo", "127.0.0.1:27017/skyring",
                   "-u", "admin",
-                  "-p", "{0}".format(password),
-                  "<", "{1}".format(scriptfile)]
+                  "-p", "{}".format(password),
+                  "<", "{}".format(scriptfile)]
+    print pm('Database cleaned', 'done', colors.OKBLUE)
     # Clean salt-keys
     print pm('Removing salt-keys', 'info', colors.INFO)
     salt_args = ["/usr/bin/salt",
                  "-D"]
+    print pm('Salt-keys removed', 'done', colors.OKBLUE)
 
 """
 Bootstrap client agent(s)
 """
 def bootstrap_nodes(host_list, server_fqdn):
-    bootstrapCommand = 'yum update -y ; systemctl start ntpd ; curl {0}:8181/setup/agent | bash'.format(server_fqdn)
+    bootstrapCommand = 'systemctl start salt-minion ; curl {0}:8181/setup/agent | bash'.format(server_fqdn)
     # Reopen the ssh connection so we can connect to each host in the lineup
-    ssh.close()
     for each in host_list:
         print pm('Reinitializing storage node: {0}'.format(each), 'info', colors.INFO)
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         ssh.connect(each,
                     username="root",
-                    look_for_keys=False
+                    look_for_keys=True
                     )
         stdin, stdout, stderr = ssh.exec_command(bootstrapCommand)
         exit_status = stdout.channel.recv_exit_status()
         if exit_status == 0:
             print pm('Storage node: {0} initialized'.format(each),
-                     'complete', colors.OKGREEN)
+                     'done', colors.OKBLUE)
         else:
-            print "\n[ERROR] during bootstrap of host {0}. {1}".format(each, exit_status)
+            print pm('Unable to bootstrap host: {0}: -{1}'.format(each, exit_status),
+                     'error', colors.ERROR)
             client.close()
             sys.exit(1)
-    print pm('The client agent has been installed and configured but may take a few moments to appear in the RHCS Web UI',
-             'complete', colors.OKGREEN)
+    print pm('Client agents have been installed and configured but may take a few moments to appear in the RHCS Web UI',
+             'done', colors.OKBLUE)
 
 """
 exit handler
 """
 def exit_handler():
     pass
-    #print pm('rhscon-purge has exited', 'exit', colors.OKBLUE)
 
 """
 Super simple signal handler
@@ -390,7 +429,7 @@ def main():
             pass
 
         # Print a completion message and exit
-        print pm('Purge successfully complete', 'done', colors.OKBLUE)
+        print pm('Purge successful', 'complete', colors.OKGREEN)
         sys.exit(0)
     else:
         # do not proceed and exit out
