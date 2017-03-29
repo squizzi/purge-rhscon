@@ -110,7 +110,8 @@ def manage_service(command, service):
         print pm('{0} {1} service'.format(command_name2, service),
                  'done', colors.OKBLUE)
     except dbus.exceptions.DBusException:
-        print pm('An issue occurred while attempting to {0} {1}'.format(command, service),
+        print pm('An issue occurred while attempting to {0} {1}'.format(command,
+                                                                        service),
                  'error',
                  colors.ERROR)
         raise
@@ -139,14 +140,15 @@ def remove_files(files):
             os.remove(fl)
     except IOError as e:
         print pm(e, 'error', colors.ERROR)
+    print pm('{0} removed'.format(files), 'done', colors.OKBLUE)
 
 """
 Check for root, exit if non-root
 """
 def need_root():
     if os.geteuid() != 0:
-        print pm('Root privileges are required to run this script, please re-run \
-with root to continue', 'error', colors.ERROR)
+        print pm('Root privileges are required to run this script, please \
+re-run with root to continue', 'error', colors.ERROR)
         sys.exit(1)
 
 """
@@ -196,7 +198,8 @@ def generate_hosts():
 Exiting now',
         'error',
         colors.ERROR)
-        print pm ('Use the -n, --nodes flag with FQDNs to circumvent automated node list generation',
+        print pm ('Use the -n, --nodes flag with FQDNs to circumvent automated \
+node list generation',
         'info',
         colors.INFO)
         sys.exit(1)
@@ -239,7 +242,8 @@ def clean_nodes(host_list):
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         ssh.load_system_host_keys()
-        print pm('Connecting to host: {0} to clean storage node configuration'.format(each),
+        print pm('Connecting to host: {0} to clean storage node \
+configuration'.format(each),
                  'info', colors.INFO)
         try:
             ssh.connect(each,
@@ -264,7 +268,8 @@ systemctl stop salt-minion; rm -rf /etc/salt/pki/minion exited with: \
                      colors.OKBLUE)
         except paramiko.ssh_exception.SSHException as e:
             if str(e) == 'No authentication methods available':
-                print pm('Error establishing ssh connection to host: {0}!'.format(each),
+                print pm('Error establishing ssh connection to host: \
+{0}!'.format(each),
                          'error', colors.ERROR)
                 print pm('Passwordless ssh is *not* configured for this host, \
 please configure passwordless ssh for root for each storage node then re-run \
@@ -273,7 +278,8 @@ rhscon-purge\nSee: https://access.redhat.com/node/705363/',
                 client.close()
                 sys.exit(1)
             else:
-                print pm('Error establishing ssh connection to host: {0}'.format(each),
+                print pm('Error establishing ssh connection to host: \
+{0}'.format(each),
                      'error', colors.ERROR)
                 raise
                 sys.exit(1)
@@ -292,7 +298,8 @@ def clean_db(scriptfile):
             skyringconf = json.load(skyringconf)
             password = str(skyringconf["dbconfig"]["password"])
     except IOError:
-        print pm('Unable to find /etc/skyring/skyring.conf, is skyring installed here? Exiting',
+        print pm('Unable to find /etc/skyring/skyring.conf, is skyring \
+installed here? Exiting',
                  'error', colors.ERROR)
         sys.exit(1)
     # Run the mongo clean
@@ -332,7 +339,8 @@ def bootstrap_nodes(host_list, server_fqdn):
                      'error', colors.ERROR)
             client.close()
             sys.exit(1)
-    print pm('Client agents have been installed and configured but may take a few moments to appear in the RHCS Web UI',
+    print pm('Client agents have been installed and configured but may take a \
+few moments to appear in the RHCS Web UI',
              'done', colors.OKBLUE)
 
 """
@@ -378,8 +386,13 @@ def main():
 
     args = parser.parse_args()
 
+    # check for root first
+    need_root()
+
+    # confirm user wants to proceed
     print(colors.BOLD + 'Starting Red Hat Storage Console purge...' + colors.ENDC)
-    print pm('**ALL** existing data on this RHSC will be removed once the purge is complete.',
+    print pm('**ALL** existing data on this RHSC will be removed once the \
+purge is complete.',
        'warning', colors.WARNING)
     choice = yes_no('Are you sure you wish to proceed')
 
