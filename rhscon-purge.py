@@ -39,9 +39,8 @@ from subprocess import Popen, PIPE
 Terminal colors
 """
 class colors:
-    HEADER = '\033[96m'     # cyan
     INFO = '\033[95m'       # purple
-    OKBLUE = '\033[94m'     # blue
+    OKBLUE = '\033[96m'     # cyan
     OKGREEN = '\033[92m'    # green
     WARNING = '\033[93m'    # yellow
     ERROR = '\033[91m'      # red
@@ -379,7 +378,7 @@ def main():
 
     args = parser.parse_args()
 
-    print(colors.HEADER + 'Starting Red Hat Storage Console purge...' + colors.ENDC)
+    print(colors.BOLD + 'Starting Red Hat Storage Console purge...' + colors.ENDC)
     print pm('**ALL** existing data on this RHSC will be removed once the purge is complete.',
        'warning', colors.WARNING)
     choice = yes_no('Are you sure you wish to proceed')
